@@ -213,9 +213,6 @@ func appendLastAssistantMessage(records []*parser.Record, msg string, provider p
 		Sequence:  seq,
 		Provider:  provider,
 	}
-	if provider == parser.ProviderCodex {
-		rec.Phase = parser.PhaseFinal
-	}
 	return append(records, rec)
 }
 
