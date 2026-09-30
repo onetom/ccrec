@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/capybara-translation/ccrec/internal/formatter"
 	"github.com/capybara-translation/ccrec/internal/parser"
@@ -22,7 +23,11 @@ type HookInput struct {
 	SessionID      string `json:"session_id"`
 	TranscriptPath string `json:"transcript_path"`
 	StopHookActive bool   `json:"stop_hook_active"`
-	CWD            string `json:"cwd"`
+	// LastAssistantMessage is the final assistant reply. The transcript file
+	// may not have been flushed yet when the Stop hook runs, so it can be
+	// missing from the JSONL.
+	LastAssistantMessage string `json:"last_assistant_message"`
+	CWD                  string `json:"cwd"`
 	// Official hook input fields retained for future event/model-specific behavior.
 	HookEventName string `json:"hook_event_name"`
 	Model         string `json:"model"`
@@ -126,7 +131,7 @@ func Run(args []string) {
 			fmt.Fprintf(os.Stderr, "ccrec hook: warning: %s\n", diagnostic.Message)
 		}
 	}
-	records := result.Records
+	records := appendLastAssistantMessage(result.Records, input.LastAssistantMessage, result.Provider)
 
 	if len(records) == 0 {
 		return
@@ -176,6 +181,52 @@ func Run(args []string) {
 		fmt.Fprintf(os.Stderr, "ccrec hook: format error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// appendLastAssistantMessage appends msg as a final assistant record unless the
+// transcript already contains it in the current turn (the assistant records
+// after the last user message with visible text).
+func appendLastAssistantMessage(records []*parser.Record, msg string, provider parser.Provider) []*parser.Record {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return records
+	}
+	for i := len(records) - 1; i >= 0; i-- {
+		rec := records[i]
+		text := strings.TrimSpace(recordVisibleText(rec))
+		if rec.Role == "user" && text != "" && !rec.IsMeta {
+			break
+		}
+		if rec.Role == "assistant" && text == msg {
+			return records
+		}
+	}
+	seq := 0
+	if n := len(records); n > 0 {
+		seq = records[n-1].Sequence + 1
+	}
+	rec := &parser.Record{
+		Type:      "assistant",
+		Role:      "assistant",
+		Text:      msg,
+		Timestamp: time.Now(),
+		Sequence:  seq,
+		Provider:  provider,
+	}
+	if provider == parser.ProviderCodex {
+		rec.Phase = parser.PhaseFinal
+	}
+	return append(records, rec)
+}
+
+func recordVisibleText(rec *parser.Record) string {
+	if rec.Text != "" {
+		return rec.Text
+	}
+	if rec.Message == nil {
+		return ""
+	}
+	return parser.ExtractText(rec.Message.Content)
 }
 
 // deriveProjectName determines the project name from the project directory (CLAUDE_PROJECT_DIR or cwd),

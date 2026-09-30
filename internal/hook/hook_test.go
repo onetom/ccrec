@@ -605,3 +605,26 @@ func TestExpandHome(t *testing.T) {
 		t.Error("bare ~ should be expanded")
 	}
 }
+
+func TestAppendLastAssistantMessage(t *testing.T) {
+	user := &parser.Record{Role: "user", Text: "hi"}
+	asst := &parser.Record{Role: "assistant", Text: "done"}
+	toolResult := &parser.Record{Role: "user"}
+
+	got := appendLastAssistantMessage([]*parser.Record{user}, " done\n", parser.ProviderClaude)
+	if len(got) != 2 || got[1].Text != "done" || got[1].Role != "assistant" {
+		t.Fatalf("missing message not appended: %+v", got)
+	}
+	got = appendLastAssistantMessage([]*parser.Record{user, asst, toolResult}, "done", parser.ProviderClaude)
+	if len(got) != 3 {
+		t.Fatalf("duplicate appended: %d records", len(got))
+	}
+	// Same text in an earlier turn does not count as present.
+	got = appendLastAssistantMessage([]*parser.Record{asst, user}, "done", parser.ProviderClaude)
+	if len(got) != 3 {
+		t.Fatalf("earlier-turn text wrongly deduped: %d records", len(got))
+	}
+	if got := appendLastAssistantMessage([]*parser.Record{user}, "  ", parser.ProviderClaude); len(got) != 1 {
+		t.Fatalf("empty message appended")
+	}
+}
